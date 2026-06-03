@@ -17,6 +17,7 @@ export function useGameState(mode: GameMode) {
   const [state, setState] = useState<GameState>(createInitialState);
   const [selectedCell, setSelectedCell] = useState<Cell | null>(null);
   const [wallMode, setWallMode] = useState(false);
+  const [wallOrientation, setWallOrientation] = useState<'horizontal' | 'vertical'>('horizontal');
 
   useEffect(() => {
     if (
@@ -50,6 +51,7 @@ export function useGameState(mode: GameMode) {
     setState((prev) => applyMove(prev, action));
     setSelectedCell(null);
     setWallMode(false);
+    setWallOrientation('horizontal');
   }, []);
 
   const handleCellClick = useCallback(
@@ -92,9 +94,15 @@ export function useGameState(mode: GameMode) {
     [isMyTurn, state.gameOver, wallMode, validWalls, handleAction]
   );
 
-  const toggleWallMode = useCallback(() => {
+  const toggleWallMode = useCallback((orientation?: 'horizontal' | 'vertical') => {
     if (!isMyTurn || state.gameOver) return;
-    setWallMode((prev) => !prev);
+    setWallMode((prev) => {
+      if (!prev) {
+        // entering wall mode — set orientation
+        if (orientation) setWallOrientation(orientation);
+      }
+      return !prev;
+    });
     setSelectedCell(null);
   }, [isMyTurn, state.gameOver]);
 
@@ -102,12 +110,14 @@ export function useGameState(mode: GameMode) {
     setState(createInitialState());
     setSelectedCell(null);
     setWallMode(false);
+    setWallOrientation('horizontal');
   }, []);
 
   return {
     state,
     selectedCell,
     wallMode,
+    wallOrientation,
     isMyTurn,
     validMoves,
     validWalls,

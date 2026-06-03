@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useRef } from 'react';
 import {
   GameState,
   Cell,
@@ -37,16 +37,39 @@ function wallRect(w: Wall) {
 const PLAYER_COLORS = ['#44AAFF', '#FF4444'] as const;
 const WALL_COLOR = '#A07828';
 
+interface DragState {
+  playerIndex: number;
+  startX: number;
+  startY: number;
+}
+
 interface Props {
   state: GameState;
   validMoves: Cell[];
   validWalls: Wall[];
   wallMode: boolean;
+  wallOrientation: 'horizontal' | 'vertical';
   selectedCell: Cell | null;
   isMyTurn: boolean;
   currentPlayer: PlayerID;
   onCellClick: (cell: Cell) => void;
   onWallSlotClick: (wall: Wall) => void;
+  onPawnDragEnd: (cell: Cell) => void;
+}
+
+function svgPoint(e: PointerEvent, svg: SVGSVGElement) {
+  const rect = svg.getBoundingClientRect();
+  return {
+    x: ((e.clientX - rect.left) / rect.width) * GRID,
+    y: ((e.clientY - rect.top) / rect.height) * GRID,
+  };
+}
+
+function nearestCell(px: number, py: number): Cell {
+  return {
+    row: Math.round((py - PAD - CELL / 2) / STEP),
+    col: Math.round((px - PAD - CELL / 2) / STEP),
+  };
 }
 
 export function Board({
@@ -54,13 +77,18 @@ export function Board({
   validMoves,
   validWalls,
   wallMode,
+  wallOrientation,
   selectedCell,
   isMyTurn,
   currentPlayer,
   onCellClick,
   onWallSlotClick,
+  onPawnDragEnd,
 }: Props) {
   const [hovered, setHovered] = useState<Wall | null>(null);
+  const [dragging, setDragging] = useState<DragState | null>(null);
+  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
 
   const moveSet = useMemo(
     () => new Set(validMoves.map((m) => `${m.row},${m.col}`)),
@@ -77,12 +105,65 @@ export function Board({
     [wallSet],
   );
 
+  const canDrag = isMyTurn && !wallMode && !state.gameOver;
+
+  // --- Pawn drag handlers ---
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent, playerIndex: number) => {
+      if (!canDrag) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const svg = svgRef.current;
+      if (!svg) return;
+      const pt = svgPoint(e.nativeEvent, svg);
+      (e.target as SVGElement).setPointerCapture(e.pointerId);
+      setDragging({ playerIndex, startX: cx(state.players[playerIndex].col), startY: cy(state.players[playerIndex].row) });
+      setDragPos(pt);
+    },
+    [canDrag, state.players],
+  );
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (!dragging || !svgRef.current) return;
+      e.preventDefault();
+      const pt = svgPoint(e.nativeEvent, svgRef.current);
+      setDragPos(pt);
+    },
+    [dragging],
+  );
+
+  const handlePointerUp = useCallback(
+    (e: React.PointerEvent) => {
+      if (!dragging) return;
+      e.preventDefault();
+      const svg = svgRef.current;
+      if (!svg) return;
+      const pt = svgPoint(e.nativeEvent, svg);
+      const cell = nearestCell(pt.x, pt.y);
+      // Clamp to board
+      cell.row = Math.max(0, Math.min(BOARD_SIZE - 1, cell.row));
+      cell.col = Math.max(0, Math.min(BOARD_SIZE - 1, cell.col));
+
+      if (moveSet.has(`${cell.row},${cell.col}`)) {
+        onPawnDragEnd(cell);
+      }
+      setDragging(null);
+      setDragPos(null);
+    },
+    [dragging, moveSet, onPawnDragEnd],
+  );
+
   return (
     <svg
+      ref={svgRef}
       viewBox={`0 0 ${GRID} ${GRID}`}
-      className="w-full max-w-[420px] mx-auto select-none touch-none"
+      className="w-full max-w-[420px] mx-auto select-none"
+      style={{ touchAction: 'none' }}
       role="img"
       aria-label="Quoridor board"
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
     >
       <defs>
         <radialGradient id="pawnGrad0" cx="40%" cy="35%">
@@ -166,86 +247,47 @@ export function Board({
         );
       })}
 
-      {/* Wall placement slots (wall mode) */}
+      {/* Wall placement slots (wall mode — only selected orientation) */}
       {wallMode &&
         isMyTurn &&
         Array.from({ length: 8 }, (_, r) =>
           Array.from({ length: 8 }, (_, c) => {
-            const hw: Wall = { row: r, col: c, orientation: 'horizontal' };
-            const vw: Wall = { row: r, col: c, orientation: 'vertical' };
-            const hr = wallRect(hw);
-            const vr = wallRect(vw);
-            const hOk = isWallOk(hw);
-            const vOk = isWallOk(vw);
-            const hHov =
+            const w: Wall = { row: r, col: c, orientation: wallOrientation };
+            const wr = wallRect(w);
+            const ok = isWallOk(w);
+            const isHov =
               hovered?.row === r &&
               hovered?.col === c &&
-              hovered?.orientation === 'horizontal';
-            const vHov =
-              hovered?.row === r &&
-              hovered?.col === c &&
-              hovered?.orientation === 'vertical';
+              hovered?.orientation === wallOrientation;
 
             return (
               <g key={`ws${r}${c}`}>
                 <rect
-                  x={hr.x}
-                  y={hr.y - 16}
-                  width={hr.width}
-                  height={WALL_THICK + 32}
+                  x={wallOrientation === 'horizontal' ? wr.x : wr.x - 16}
+                  y={wallOrientation === 'horizontal' ? wr.y - 16 : wr.y}
+                  width={wallOrientation === 'horizontal' ? wr.width : WALL_THICK + 32}
+                  height={wallOrientation === 'horizontal' ? WALL_THICK + 32 : wr.height}
                   fill={
-                    hHov
-                      ? hOk
+                    isHov
+                      ? ok
                         ? 'rgba(245,158,11,0.3)'
                         : 'rgba(239,68,68,0.15)'
-                      : hOk
+                      : ok
                         ? 'rgba(245,158,11,0.05)'
                         : 'transparent'
                   }
                   rx={3}
                   className="cursor-pointer"
-                  onClick={() => onWallSlotClick(hw)}
-                  onMouseEnter={() => hOk && setHovered(hw)}
+                  onClick={() => onWallSlotClick(w)}
+                  onMouseEnter={() => ok && setHovered(w)}
                   onMouseLeave={() => setHovered(null)}
                 />
-                {hHov && hOk && (
+                {isHov && ok && (
                   <rect
-                    x={hr.x}
-                    y={hr.y}
-                    width={hr.width}
-                    height={hr.height}
-                    rx={1}
-                    fill="#F59E0B"
-                    opacity={0.7}
-                  />
-                )}
-
-                <rect
-                  x={vr.x - 16}
-                  y={vr.y}
-                  width={WALL_THICK + 32}
-                  height={vr.height}
-                  fill={
-                    vHov
-                      ? vOk
-                        ? 'rgba(245,158,11,0.3)'
-                        : 'rgba(239,68,68,0.15)'
-                      : vOk
-                        ? 'rgba(245,158,11,0.05)'
-                        : 'transparent'
-                  }
-                  rx={3}
-                  className="cursor-pointer"
-                  onClick={() => onWallSlotClick(vw)}
-                  onMouseEnter={() => vOk && setHovered(vw)}
-                  onMouseLeave={() => setHovered(null)}
-                />
-                {vHov && vOk && (
-                  <rect
-                    x={vr.x}
-                    y={vr.y}
-                    width={vr.width}
-                    height={vr.height}
+                    x={wr.x}
+                    y={wr.y}
+                    width={wr.width}
+                    height={wr.height}
                     rx={1}
                     fill="#F59E0B"
                     opacity={0.7}
@@ -259,13 +301,19 @@ export function Board({
       {/* Pawns */}
       {state.players.map((p, i) => {
         const isActive = currentPlayer === i && !state.gameOver;
+        const isDragging = dragging?.playerIndex === i;
+        const px = isDragging && dragPos ? dragPos.x : cx(p.col);
+        const py = isDragging && dragPos ? dragPos.y : cy(p.row);
+
         return (
           <g
             key={`p${i}`}
             style={{
-              transform: `translate(${cx(p.col)}px, ${cy(p.row)}px)`,
-              transition: 'transform 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+              transform: `translate(${px}px, ${py}px)`,
+              transition: isDragging ? 'none' : 'transform 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+              cursor: canDrag && currentPlayer === i ? 'grab' : 'default',
             }}
+            onPointerDown={(e) => handlePointerDown(e, i)}
           >
             {/* Glow for active player */}
             {isActive && (

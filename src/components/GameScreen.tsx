@@ -95,6 +95,7 @@ export function GameScreen({ mode, online, onQuit }: Props) {
   }, [state, isMyTurn, currentPlayer, isOnline, onlinePid]);
 
   const wallMode = isOnline ? false : local.wallMode;
+  const wallOrientation = isOnline ? 'horizontal' as const : local.wallOrientation;
 
   const dispatch = useCallback(
     (action: GameAction) => {
@@ -137,6 +138,20 @@ export function GameScreen({ mode, online, onQuit }: Props) {
       }
     },
     [isOnline, isMyTurn, uiValidWalls, dispatch, local],
+  );
+
+  const handlePawnDragEnd = useCallback(
+    (cell: Cell) => {
+      if (isOnline) {
+        if (!isMyTurn) return;
+        if (uiValidMoves.some((m) => m.row === cell.row && m.col === cell.col)) {
+          dispatch({ type: 'move', cell });
+        }
+      } else {
+        local.handleAction({ type: 'move', cell });
+      }
+    },
+    [isOnline, isMyTurn, uiValidMoves, dispatch, local],
   );
 
   // Keyboard
@@ -217,15 +232,17 @@ export function GameScreen({ mode, online, onQuit }: Props) {
           validMoves={uiValidMoves}
           validWalls={uiValidWalls}
           wallMode={wallMode}
+          wallOrientation={wallOrientation}
           selectedCell={isOnline ? null : local.selectedCell}
           isMyTurn={isMyTurn}
           currentPlayer={currentPlayer}
           onCellClick={handleCellClick}
           onWallSlotClick={handleWallSlotClick}
+          onPawnDragEnd={handlePawnDragEnd}
         />
       </div>
 
-      {/* Bottom bar: Turn + Player 1 + Wall button */}
+      {/* Bottom bar: Turn + Player 1 + Wall buttons */}
       <div className="w-full max-w-[420px] flex flex-col gap-2">
         {/* Turn indicator */}
         <div className="flex items-center justify-center gap-2">
@@ -243,21 +260,34 @@ export function GameScreen({ mode, online, onQuit }: Props) {
           label={isOnline ? 'You' : 'Player 1'}
         />
 
-        {/* Action bar */}
+        {/* Action bar — H / V wall toggle */}
         <div className="flex items-center gap-3 mt-1">
           <div className="flex-1" />
           {!isOnline && (
-            <button
-              onClick={local.toggleWallMode}
-              disabled={!local.isMyTurn || state.gameOver}
-              className={`px-5 py-2.5 rounded-xl text-sm font-semibold transition-all ${
-                local.wallMode
-                  ? 'bg-amber-500 text-black'
-                  : 'bg-white/10 text-amber-400 hover:bg-white/15'
-              } disabled:opacity-30 disabled:cursor-not-allowed`}
-            >
-              🧱 Place Wall
-            </button>
+            <>
+              <button
+                onClick={() => local.toggleWallMode('horizontal')}
+                disabled={!local.isMyTurn || state.gameOver}
+                className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+                  local.wallMode && local.wallOrientation === 'horizontal'
+                    ? 'bg-amber-500 text-black'
+                    : 'bg-white/10 text-amber-400 hover:bg-white/15'
+                } disabled:opacity-30 disabled:cursor-not-allowed`}
+              >
+                🧱 H
+              </button>
+              <button
+                onClick={() => local.toggleWallMode('vertical')}
+                disabled={!local.isMyTurn || state.gameOver}
+                className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+                  local.wallMode && local.wallOrientation === 'vertical'
+                    ? 'bg-amber-500 text-black'
+                    : 'bg-white/10 text-amber-400 hover:bg-white/15'
+                } disabled:opacity-30 disabled:cursor-not-allowed`}
+              >
+                🧱 V
+              </button>
+            </>
           )}
         </div>
       </div>
